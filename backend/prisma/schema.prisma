@@ -1,0 +1,261 @@
+// prisma/schema.prisma
+// EventGo MVP — Full Database Schema
+// Run: npx prisma migrate dev --name init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────
+// ENUMS
+// ─────────────────────────────────────────
+
+enum Role {
+  USER
+  ADMIN
+}
+
+enum EventStatus {
+  DRAFT
+  ACTIVE
+  COMPLETED
+}
+
+enum EventVendorStatus {
+  SHORTLISTED
+  SELECTED
+}
+
+enum LeadActionType {
+  VIEW
+  CONTACT
+  FAVORITE
+}
+
+// ─────────────────────────────────────────
+// USERS
+// ─────────────────────────────────────────
+
+model User {
+  id             String   @id @default(uuid())
+  name           String
+  email          String   @unique
+  password       String
+  role           Role     @default(USER)
+  emailVerified  Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  deleted        Boolean  @default(false)
+
+  events         Event[]
+  favorites      Favorite[]
+  contactRequests ContactRequest[]
+  leads          VendorLead[]
+  adminLogs      AdminLog[]
+
+  @@map("users")
+}
+
+// ─────────────────────────────────────────
+// EVENTS
+// ─────────────────────────────────────────
+
+model Event {
+  id          String      @id @default(uuid())
+  userId      String
+  name        String
+  eventType   String
+  eventDate   DateTime
+  totalBudget Decimal     @db.Decimal(12, 2)
+  status      EventStatus @default(DRAFT)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  deleted     Boolean     @default(false)
+
+  user           User             @relation(fields: [userId], references: [id])
+  expenses       Expense[]
+  eventVendors   EventVendor[]
+  contactRequests ContactRequest[]
+  leads          VendorLead[]
+
+  @@map("events")
+}
+
+// ─────────────────────────────────────────
+// EXPENSE CATEGORIES
+// ─────────────────────────────────────────
+
+model ExpenseCategory {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  createdAt DateTime @default(now())
+  deleted   Boolean  @default(false)
+
+  expenses  Expense[]
+
+  @@map("expense_categories")
+}
+
+// ─────────────────────────────────────────
+// EXPENSES
+// ─────────────────────────────────────────
+
+model Expense {
+  id               String   @id @default(uuid())
+  eventId          String
+  categoryId       String
+  title            String
+  estimatedAmount  Decimal  @db.Decimal(12, 2)
+  actualAmount     Decimal? @db.Decimal(12, 2)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  deleted          Boolean  @default(false)
+
+  event    Event           @relation(fields: [eventId], references: [id])
+  category ExpenseCategory @relation(fields: [categoryId], references: [id])
+
+  @@map("expenses")
+}
+
+// ─────────────────────────────────────────
+// VENDOR CATEGORIES
+// ─────────────────────────────────────────
+
+model VendorCategory {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  createdAt DateTime @default(now())
+  deleted   Boolean  @default(false)
+
+  vendors   Vendor[]
+
+  @@map("vendor_categories")
+}
+
+// ─────────────────────────────────────────
+// VENDORS
+// ─────────────────────────────────────────
+
+model Vendor {
+  id          String   @id @default(uuid())
+  categoryId  String
+  name        String
+  description String?  @db.Text
+  minPrice    Decimal  @db.Decimal(12, 2)
+  maxPrice    Decimal  @db.Decimal(12, 2)
+  location    String?
+  imageUrl    String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  deleted     Boolean  @default(false)
+
+  category        VendorCategory   @relation(fields: [categoryId], references: [id])
+  favorites       Favorite[]
+  eventVendors    EventVendor[]
+  contactRequests ContactRequest[]
+  leads           VendorLead[]
+
+  @@map("vendors")
+}
+
+// ─────────────────────────────────────────
+// FAVORITES
+// ─────────────────────────────────────────
+
+model Favorite {
+  id        String   @id @default(uuid())
+  userId    String
+  vendorId  String
+  createdAt DateTime @default(now())
+  deleted   Boolean  @default(false)
+
+  user   User   @relation(fields: [userId], references: [id])
+  vendor Vendor @relation(fields: [vendorId], references: [id])
+
+  @@unique([userId, vendorId])
+  @@map("favorites")
+}
+
+// ─────────────────────────────────────────
+// EVENT VENDORS (shortlisting)
+// ─────────────────────────────────────────
+
+model EventVendor {
+  id        String            @id @default(uuid())
+  eventId   String
+  vendorId  String
+  status    EventVendorStatus @default(SHORTLISTED)
+  notes     String?
+  createdAt DateTime          @default(now())
+  deleted   Boolean           @default(false)
+
+  event  Event  @relation(fields: [eventId], references: [id])
+  vendor Vendor @relation(fields: [vendorId], references: [id])
+
+  @@unique([eventId, vendorId])
+  @@map("event_vendors")
+}
+
+// ─────────────────────────────────────────
+// CONTACT REQUESTS
+// ─────────────────────────────────────────
+
+model ContactRequest {
+  id           String   @id @default(uuid())
+  userId       String
+  vendorId     String
+  eventId      String?
+  leadId       String?
+  message      String   @db.Text
+  contactEmail String
+  createdAt    DateTime @default(now())
+  deleted      Boolean  @default(false)
+
+  user   User   @relation(fields: [userId], references: [id])
+  vendor Vendor @relation(fields: [vendorId], references: [id])
+  event  Event? @relation(fields: [eventId], references: [id])
+
+  @@map("contact_requests")
+}
+
+// ─────────────────────────────────────────
+// VENDOR LEADS (core business model)
+// ─────────────────────────────────────────
+
+model VendorLead {
+  id         String         @id @default(uuid())
+  vendorId   String
+  userId     String
+  eventId    String?
+  actionType LeadActionType
+  createdAt  DateTime       @default(now())
+
+  vendor Vendor @relation(fields: [vendorId], references: [id])
+  user   User   @relation(fields: [userId], references: [id])
+  event  Event? @relation(fields: [eventId], references: [id])
+
+  @@map("vendor_leads")
+}
+
+// ─────────────────────────────────────────
+// ADMIN LOGS
+// ─────────────────────────────────────────
+
+model AdminLog {
+  id         String   @id @default(uuid())
+  adminId    String
+  action     String
+  targetType String
+  targetId   String?
+  createdAt  DateTime @default(now())
+
+  admin User @relation(fields: [adminId], references: [id])
+
+  @@map("admin_logs")
+}
