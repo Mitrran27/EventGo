@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { Menu, X, LogOut } from 'lucide-react';
 import { useAuthStore } from '../../store/authStore';
+import logo from '../../assets/logo.png';  // ← go up TWO levels
 
 export default function Navbar() {
   const [open, setOpen] = useState(false);
@@ -15,7 +16,8 @@ export default function Navbar() {
     <nav className="sticky top-0 z-50 bg-white border-b border-gray-200">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
-          <Link to="/vendors" className="text-brand-500 font-bold text-2xl tracking-tight">event<span className="text-gray-900">go</span></Link>
+          <img src={logo} alt="EventGo" className="h-14 w-auto mx-auto tracking-tight"/>
+          {/* <Link to="/vendors" className="text-brand-500 font-bold text-2xl tracking-tight">event<span className="text-gray-900">go</span></Link> */}
           <div className="hidden md:flex items-center gap-6">
             <Link to="/vendors" className={`text-sm ${active('/vendors')}`}>Explore</Link>
             {user && <>

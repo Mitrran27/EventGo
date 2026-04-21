@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import api from '../lib/api';
 import { useAuthStore } from '../store/authStore';
+import logo from '../assets/logo.png';
+
 export default function LoginPage() {
   const [form, setForm] = useState({ email: '', password: '' });
   const [loading, setLoading] = useState(false);
@@ -23,7 +25,8 @@ export default function LoginPage() {
     <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-8 w-full max-w-sm">
         <div className="text-center mb-8">
-          <h1 className="text-2xl font-bold"><span className="text-brand-500">event</span>go</h1>
+          <img src={logo} alt="EventGo" className="h-14 w-auto mx-auto" />
+          {/* <h1 className="text-2xl font-bold"><span className="text-brand-500">event</span>go</h1> */}
           <p className="text-gray-500 text-sm mt-1">Admin Portal</p>
         </div>
         <form onSubmit={handleSubmit} className="space-y-4">

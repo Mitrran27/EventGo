@@ -1,10 +1,13 @@
 import { Link } from 'react-router-dom';
+import logo from '../../assets/logo.png';  // ← go up TWO levels
+
 export default function Footer() {
   return (
     <footer className="bg-gray-50 border-t border-gray-200 mt-16">
       <div className="max-w-7xl mx-auto px-6 py-10 flex flex-col md:flex-row justify-between gap-6">
         <div>
-          <span className="text-brand-500 font-bold text-xl">event<span className="text-gray-900">go</span></span>
+          <img src={logo} alt="EventGo" className="h-14 w-auto mx-auto text-brand-500 font-bold text-xl"/>
+          {/* <span className="text-brand-500 font-bold text-xl">event<span className="text-gray-900">go</span></span> */}
           <p className="text-gray-500 text-sm mt-1">Plan your perfect event.</p>
         </div>
         <div className="flex gap-8 text-sm text-gray-500">
