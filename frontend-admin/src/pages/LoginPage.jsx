@@ -13,8 +13,7 @@ export default function LoginPage() {
   const handleSubmit = async (e) => {
     e.preventDefault(); setLoading(true);
     try {
-      const { data } = await api.post('/auth/login', form);
-      if (data.data.user.role !== 'ADMIN') { toast.error('Admin access only'); setLoading(false); return; }
+      const { data } = await api.post('/auth/admin-login', form);
       setAuth(data.data.user, data.data.token);
       toast.success('Welcome back!');
       navigate('/dashboard');
