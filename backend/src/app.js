@@ -23,6 +23,7 @@ app.use('/api/favorites',  require('./modules/favorites/favorites.routes'));
 app.use('/api/contact',    require('./modules/contact/contact.routes'));
 app.use('/api/categories', require('./modules/categories/categories.routes'));
 app.use('/api/admin',      require('./modules/admin/admin.routes'));
+app.use('/api/chat',       require('./modules/chat/chat.routes'));  // AI Chat
 
 app.get('/api/health', (req, res) => res.json({ status: 'ok', timestamp: new Date() }));
 app.use(errorHandler);
