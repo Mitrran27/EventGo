@@ -538,11 +538,6 @@ By category:
     )
 
     # ── Budget advice section ─────────────────────────────────────────────────
-    budget_advice_text = "\n".join([
-        f"\n### {etype.title()} Event Budget Split (recommended):",
-        *[f"  - {cat}: {pct}" for cat, pct in splits.items()]
-    ] for etype, splits in BUDGET_SPLIT_ADVICE.items())
-
     # Fix — join properly
     budget_lines = []
     for etype, splits in BUDGET_SPLIT_ADVICE.items():
