@@ -864,3 +864,396 @@ async def health():
         return {"status": "ok", "service": "eventgo-ai-chat", "ollama": "connected", "models": models}
     except Exception:
         return {"status": "degraded", "service": "eventgo-ai-chat", "ollama": "disconnected"}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ADMIN ANALYTICS CHAT ENDPOINT
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def fetch_admin_analytics() -> dict:
+    """
+    Pull live analytics directly via SQL using the correct lowercase table names
+    as defined in prisma/schema.prisma @@map() directives.
+    Each query runs independently so one failure doesn't break the rest.
+    """
+    result = {
+        "overall":              {},
+        "new_users_this_month": 0,
+        "leads_by_type":        [],
+        "top_vendors_by_leads": [],
+        "zero_lead_vendors":    [],
+        "events_by_type":       [],
+        "budget_stats":         {"avg": 0, "min": 0, "max": 0},
+        "contacts_by_status":   [],
+        "category_performance": [],
+        "revenue_estimate":     {"estimated_min_revenue": 0, "events_with_vendors": 0},
+        "top_users_by_events":  [],
+    }
+    try:
+        conn = get_db_conn()
+        cur  = conn.cursor()
+
+        # 1. Overall platform stats
+        try:
+            cur.execute("""
+                SELECT
+                    (SELECT COUNT(*) FROM users     WHERE deleted = false AND role = 'USER') AS total_users,
+                    (SELECT COUNT(*) FROM events    WHERE deleted = false)                   AS total_events,
+                    (SELECT COUNT(*) FROM vendors   WHERE deleted = false)                   AS total_vendors,
+                    (SELECT COUNT(*) FROM vendor_leads)                                      AS total_leads,
+                    (SELECT COUNT(*) FROM contact_requests WHERE deleted = false)            AS total_contacts
+            """)
+            result["overall"] = dict(cur.fetchone() or {})
+        except Exception as e:
+            print(f"overall stats failed: {e}"); conn.rollback()
+
+        # 2. New users this month
+        try:
+            cur.execute("""
+                SELECT COUNT(*) AS n FROM users
+                WHERE deleted = false AND role = 'USER'
+                  AND "createdAt" >= date_trunc('month', NOW())
+            """)
+            result["new_users_this_month"] = int(cur.fetchone()["n"] or 0)
+        except Exception as e:
+            print(f"new_users failed: {e}"); conn.rollback()
+
+        # 3. Leads by action type
+        try:
+            cur.execute("""
+                SELECT "actionType", COUNT(*) AS count
+                FROM vendor_leads
+                GROUP BY "actionType"
+                ORDER BY count DESC
+            """)
+            result["leads_by_type"] = [
+                {"actiontype": r["actionType"], "count": int(r["count"])}
+                for r in cur.fetchall()
+            ]
+        except Exception as e:
+            print(f"leads_by_type failed: {e}"); conn.rollback()
+
+        # 4. Top 5 vendors by lead count
+        try:
+            cur.execute("""
+                SELECT v.name, vc.name AS category, v.location,
+                       COUNT(vl.id) AS lead_count
+                FROM vendors v
+                JOIN vendor_categories vc ON v."categoryId" = vc.id
+                LEFT JOIN vendor_leads vl ON vl."vendorId" = v.id
+                WHERE v.deleted = false
+                GROUP BY v.id, v.name, vc.name, v.location
+                ORDER BY lead_count DESC
+                LIMIT 5
+            """)
+            result["top_vendors_by_leads"] = [
+                {**dict(r), "lead_count": int(r["lead_count"])}
+                for r in cur.fetchall()
+            ]
+        except Exception as e:
+            print(f"top_vendors failed: {e}"); conn.rollback()
+
+        # 5. Vendors with zero leads
+        try:
+            cur.execute("""
+                SELECT v.name, vc.name AS category
+                FROM vendors v
+                JOIN vendor_categories vc ON v."categoryId" = vc.id
+                LEFT JOIN vendor_leads vl ON vl."vendorId" = v.id
+                WHERE v.deleted = false AND vl.id IS NULL
+            """)
+            result["zero_lead_vendors"] = [dict(r) for r in cur.fetchall()]
+        except Exception as e:
+            print(f"zero_lead_vendors failed: {e}"); conn.rollback()
+
+        # 6. Events by type
+        try:
+            cur.execute("""
+                SELECT "eventType" AS type, COUNT(*) AS count
+                FROM events
+                WHERE deleted = false
+                GROUP BY "eventType"
+                ORDER BY count DESC
+            """)
+            result["events_by_type"] = [dict(r) for r in cur.fetchall()]
+        except Exception as e:
+            print(f"events_by_type failed: {e}"); conn.rollback()
+
+        # 7. Budget stats
+        try:
+            cur.execute("""
+                SELECT
+                    ROUND(AVG("totalBudget")) AS avg_budget,
+                    MIN("totalBudget")        AS min_budget,
+                    MAX("totalBudget")        AS max_budget
+                FROM events
+                WHERE deleted = false AND "totalBudget" > 0
+            """)
+            bs = dict(cur.fetchone() or {})
+            result["budget_stats"] = {
+                "avg": int(bs.get("avg_budget") or 0),
+                "min": int(bs.get("min_budget") or 0),
+                "max": int(bs.get("max_budget") or 0),
+            }
+        except Exception as e:
+            print(f"budget_stats failed: {e}"); conn.rollback()
+
+        # 8. Contact requests by status — no status column, count by vendor instead
+        try:
+            cur.execute("""
+                SELECT v.name AS vendor, COUNT(cr.id) AS count
+                FROM contact_requests cr
+                JOIN vendors v ON cr."vendorId" = v.id
+                WHERE cr.deleted = false
+                GROUP BY v.name
+                ORDER BY count DESC
+                LIMIT 10
+            """)
+            result["contacts_by_status"] = [dict(r) for r in cur.fetchall()]
+        except Exception as e:
+            print(f"contacts_by_status failed: {e}"); conn.rollback()
+
+        # 9. Category performance
+        try:
+            cur.execute("""
+                SELECT vc.name AS category,
+                       COUNT(vl.id)            AS total_leads,
+                       COUNT(DISTINCT v.id)    AS total_vendors,
+                       COUNT(DISTINCT vl."vendorId") AS vendors_with_leads
+                FROM vendor_categories vc
+                LEFT JOIN vendors v       ON v."categoryId" = vc.id AND v.deleted = false
+                LEFT JOIN vendor_leads vl ON vl."vendorId" = v.id
+                WHERE vc.deleted = false
+                GROUP BY vc.name
+                ORDER BY total_leads DESC
+            """)
+            result["category_performance"] = [
+                {**dict(r), "total_leads": int(r["total_leads"])}
+                for r in cur.fetchall()
+            ]
+        except Exception as e:
+            print(f"category_performance failed: {e}"); conn.rollback()
+
+        # 10. Revenue estimate from selected vendors
+        try:
+            cur.execute("""
+                SELECT
+                    COALESCE(SUM(v."minPrice"), 0) AS estimated_min_revenue,
+                    COUNT(DISTINCT ev."eventId")   AS events_with_vendors
+                FROM event_vendors ev
+                JOIN vendors v ON ev."vendorId" = v.id
+                WHERE ev.status = 'SELECTED' AND ev.deleted = false
+            """)
+            rev = dict(cur.fetchone() or {})
+            result["revenue_estimate"] = {
+                "estimated_min_revenue": int(rev.get("estimated_min_revenue") or 0),
+                "events_with_vendors":   int(rev.get("events_with_vendors") or 0),
+            }
+        except Exception as e:
+            print(f"revenue_estimate failed: {e}"); conn.rollback()
+
+        # 11. Top users by event count
+        try:
+            cur.execute("""
+                SELECT u.name, u.email, COUNT(e.id) AS event_count
+                FROM users u
+                LEFT JOIN events e ON e."userId" = u.id AND e.deleted = false
+                WHERE u.deleted = false AND u.role = 'USER'
+                GROUP BY u.id, u.name, u.email
+                ORDER BY event_count DESC
+                LIMIT 5
+            """)
+            result["top_users_by_events"] = [
+                {**dict(r), "event_count": int(r["event_count"])}
+                for r in cur.fetchall()
+            ]
+        except Exception as e:
+            print(f"top_users failed: {e}"); conn.rollback()
+
+        conn.close()
+        print(f"Admin analytics loaded: {result['overall']}")
+
+    except Exception as e:
+        import traceback
+        print(f"DB connection error in admin analytics: {e}")
+        print(traceback.format_exc())
+
+    return result
+
+
+
+def build_admin_system_prompt(analytics: dict, user_context: dict = None) -> str:
+    """
+    Build a rich system prompt for the admin AI using live analytics data.
+    The AI can answer questions about platform performance, trends, and insights.
+    """
+    a = analytics
+    ov = a.get("overall", {})
+    bs = a.get("budget_stats", {})
+    rv = a.get("revenue_estimate", {})
+
+    # Format leads by type
+    leads_text = "\n".join(
+        f"  - {r.get('actiontype') or r.get('actionType', 'Unknown')}: {r['count']} interactions"
+        for r in a.get("leads_by_type", [])
+    ) or "  No lead data yet"
+
+    # Format top vendors
+    top_v_text = "\n".join(
+        f"  {i+1}. {r['name']} ({r['category']}, {r['location']}) — {r.get('lead_count', 0)} leads"
+        for i, r in enumerate(a.get("top_vendors_by_leads", []))
+    ) or "  No data yet"
+
+    # Zero lead vendors
+    zero_v = a.get("zero_lead_vendors", [])
+    zero_v_text = ", ".join(f"{r['name']} ({r['category']})" for r in zero_v) or "None"
+
+    # Events by type
+    events_text = "\n".join(
+        f"  - {r['type']}: {r['count']} events"
+        for r in a.get("events_by_type", [])
+    ) or "  No event data yet"
+
+    # Category performance
+    cat_text = "\n".join(
+        f"  - {r['category']}: {r['total_leads']} total leads across {r['vendors_with_leads']} vendors"
+        for r in a.get("category_performance", [])
+    ) or "  No category data yet"
+
+    # Contacts by status
+    contacts_text = "\n".join(
+        f"  - {r.get('vendor', r.get('status', 'Unknown'))}: {r['count']} requests"
+        for r in a.get("contacts_by_status", [])
+    ) or "  No contact data yet"
+
+    # Top users
+    top_u_text = "\n".join(
+        f"  {i+1}. {r['name']} ({r['email']}) — {r['event_count']} events"
+        for i, r in enumerate(a.get("top_users_by_events", []))
+    ) or "  No user data yet"
+
+    admin_ctx = f"\nCurrently logged in as: {user_context.get('name', 'Admin')} ({user_context.get('email', '')})" if user_context else ""
+
+    return f"""You are EventGo Admin Analytics Assistant — an AI analyst for the EventGo platform admin dashboard.{admin_ctx}
+
+You have access to LIVE, REAL-TIME data from the EventGo database. Use it to give accurate, insightful answers.
+
+## LIVE PLATFORM ANALYTICS (as of right now)
+
+### Overall Stats
+- Total users: {ov.get('total_users', 0)}
+- Total events created: {ov.get('total_events', 0)}
+- Total vendors listed: {ov.get('total_vendors', 0)}
+- Total leads (views/contacts/favourites): {ov.get('total_leads', 0)}
+- Total contact requests: {ov.get('total_contacts', 0)}
+- New users this month: {a.get('new_users_this_month', 0)}
+
+### Lead Breakdown by Type
+{leads_text}
+
+### Top 5 Vendors by Lead Count
+{top_v_text}
+
+### Vendors with Zero Leads (needs attention)
+{zero_v_text}
+
+### Events by Type
+{events_text}
+
+### Event Budget Stats
+- Average event budget: RM{bs.get('avg', 0):,}
+- Lowest budget: RM{bs.get('min', 0):,}
+- Highest budget: RM{bs.get('max', 0):,}
+
+### Vendor Category Performance
+{cat_text}
+
+### Contact Request Status Breakdown
+{contacts_text}
+
+### Revenue Estimate (sum of minPrice for SELECTED vendors)
+- Estimated min revenue from confirmed bookings: RM{int(rv.get('estimated_min_revenue', 0) or 0):,}
+- Events with at least one selected vendor: {rv.get('events_with_vendors', 0)}
+
+### Most Active Users (by events created)
+{top_u_text}
+
+## YOUR ROLE
+You are a business analyst. Use the data above to:
+- Answer questions about platform performance
+- Identify trends, patterns, and anomalies
+- Flag vendors, users, or categories that need attention
+- Give actionable recommendations based on the data
+- Compare metrics and explain what they mean for the business
+
+## STRICT RULES
+- ONLY use data from the analytics above — do not invent numbers
+- If asked about something not in the data, say so honestly
+- Give specific numbers when answering — be precise
+- Keep responses concise but insightful
+- Use RM (Malaysian Ringgit) for all monetary values
+
+## RESPONSE FORMAT
+- Use bullet points for lists
+- Bold important numbers: **1,234**
+- Give a 1-sentence insight or recommendation after presenting data
+- For comparisons, use clear before/after or A vs B structure
+"""
+
+
+class AdminChatRequest(BaseModel):
+    messages: list
+    user_context: Optional[dict] = None
+
+
+class AdminChatResponse(BaseModel):
+    reply: str
+
+
+@app.post("/chat/admin", response_model=AdminChatResponse)
+async def admin_chat(req: AdminChatRequest):
+    """
+    Admin-only analytics chat endpoint.
+    Fetches live platform analytics and answers questions about
+    users, vendors, leads, events, contacts, and revenue.
+    """
+    if not req.messages:
+        raise HTTPException(status_code=400, detail="No messages provided")
+
+    def msg_role(m):    return m["role"]    if isinstance(m, dict) else m.role
+    def msg_content(m): return m["content"] if isinstance(m, dict) else m.content
+
+    analytics     = fetch_admin_analytics()
+    system_prompt = build_admin_system_prompt(analytics, req.user_context)
+
+    ollama_messages = [{"role": "system", "content": system_prompt}]
+    for m in req.messages:
+        ollama_messages.append({"role": msg_role(m), "content": msg_content(m)})
+
+    print(f"Admin chat | users={analytics.get('overall', {}).get('total_users', 0)} | vendors={analytics.get('overall', {}).get('total_vendors', 0)}")
+
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            response = await client.post(
+                f"{OLLAMA_BASE_URL}/api/chat",
+                json={
+                    "model":    OLLAMA_MODEL,
+                    "messages": ollama_messages,
+                    "stream":   False,
+                    "options":  {"temperature": 0.2, "num_predict": 700},
+                },
+            )
+            response.raise_for_status()
+            data       = response.json()
+            reply_text = data["message"]["content"]
+    except httpx.ConnectError:
+        raise HTTPException(
+            status_code=502,
+            detail="Cannot connect to Ollama. Make sure it is running: `ollama serve`",
+        )
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=502, detail=f"Ollama error: {e.response.text}")
+    except Exception as e:
+        print(f"Admin chat Ollama error: {e}")
+        raise HTTPException(status_code=502, detail=str(e))
+
+    return AdminChatResponse(reply=reply_text)

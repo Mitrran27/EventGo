@@ -1,10 +1,12 @@
 // src/modules/chat/chat.routes.js
 const router = require('express').Router();
-const { chat } = require('./chat.controller');
-const { optionalAuth } = require('../../middleware/auth');
+const { chat, adminChat } = require('./chat.controller');
+const { optionalAuth, protect, adminOnly } = require('../../middleware/auth');
 
-// optionalAuth so logged-in users get personalized context,
-// but the chat is also accessible to non-logged-in visitors
+// User chat — optional auth (works for guests too)
 router.post('/', optionalAuth, chat);
+
+// Admin chat — must be authenticated admin
+router.post('/admin', protect, adminOnly, adminChat);
 
 module.exports = router;

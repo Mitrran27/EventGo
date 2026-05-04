@@ -3,6 +3,7 @@ const { error } = require('../../utils/response');
 
 const AI_SERVICE_URL = process.env.AI_SERVICE_URL || 'http://localhost:8000';
 
+// ── User chat (vendor/event questions) ───────────────────────────────────────
 const chat = async (req, res, next) => {
   try {
     const { messages, userContext } = req.body;
@@ -54,4 +55,32 @@ const chat = async (req, res, next) => {
   }
 };
 
-module.exports = { chat };
+// ── Admin chat (analytics questions) ─────────────────────────────────────────
+const adminChat = async (req, res, next) => {
+  try {
+    const { messages, userContext } = req.body;
+    if (!messages || !Array.isArray(messages) || messages.length === 0)
+      return error(res, 'Messages array is required', 400);
+    for (const msg of messages) {
+      if (!msg.role || !msg.content) return error(res, 'Each message must have role and content', 400);
+      if (!['user', 'assistant'].includes(msg.role)) return error(res, 'Invalid message role', 400);
+    }
+    const aiRes = await fetch(`${AI_SERVICE_URL}/chat/admin`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ messages, user_context: userContext || null }),
+      signal:  AbortSignal.timeout(120000),
+    });
+    if (!aiRes.ok) {
+      const errBody = await aiRes.json().catch(() => ({}));
+      return error(res, errBody.detail || 'AI service unavailable', 502);
+    }
+    const data = await aiRes.json();
+    return res.json({ success: true, data: { reply: data.reply } });
+  } catch (e) {
+    if (e.name === 'TimeoutError' || e.name === 'AbortError') return error(res, 'AI service timed out', 504);
+    next(e);
+  }
+};
+
+module.exports = { chat, adminChat };
